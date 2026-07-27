@@ -51,8 +51,8 @@ const G = 900;
 const ROPE = 290;          // fixed. every arc is the same shape
 const CATCH_SPEED = 620;   // speed at the bottom of the swing, always
 const KICK = 1.28;         // release boost — tuned so altitude breaks even
-const CATCH_R = 340;       // generous — this is the tolerance for a loose release
-const REEL = 190;          // px/s the vine shortens to its true length
+const CATCH_R = 430;       // covers 99.6% of releases that clear the gap
+const REEL = 320;          // px/s the vine shortens to its true length
 const HANG = 270;
 const WALL_W = 26;
 const PR = 8;              // player radius
@@ -69,8 +69,8 @@ const cfgFor = (passed) => {
   const d = Math.min(1, passed / RAMP);
   return {
     d,
-    gap: lerp(300, 118, d),
-    nextdx: lerp(600, 480, d),
+    gap: lerp(250, 92, d),
+    nextdx: lerp(480, 400, d),
     dbl: d < 0.18 ? 0 : Math.min(0.72, (d - 0.18) * 1.25),
     snap: lerp(3.2, 2.0, d),
   };
@@ -278,7 +278,8 @@ const hash = (n) => {
       const d = Math.hypot(dx, dy) || 1;
       const nx = dx / d, ny = dy / d;
       s.ropeLen = Math.max(ROPE, Math.min(CATCH_R, d));
-      const py = dy;
+      // clamp for the energy sum, so a long catch does not hand out speed
+      const py = Math.min(dy, ROPE);
       const v2 = Math.max(4e4, CATCH_SPEED * CATCH_SPEED - 2 * G * (ROPE - py));
       const v = Math.sqrt(v2);
       // always swing forward
@@ -326,8 +327,8 @@ const hash = (n) => {
       const probe = document.getElementById("safe");
       s.safeTop = probe ? probe.offsetHeight : 0;
       // fit the world to the space: about 900 units tall, and never less
-      // than 640 wide — on a portrait phone the width is the binding one
-      s.zoom = Math.max(0.4, Math.min(1.0, Math.min(h / 900, w / 640)));
+      // than 700 wide, so the next trunk is on screen before you commit
+      s.zoom = Math.max(0.4, Math.min(1.0, Math.min(h / 900, w / 700)));
       s.ui = Math.max(0.68, Math.min(1.25, h / 760));
     };
 
@@ -622,7 +623,7 @@ const hash = (n) => {
 
       const sx = s.shake ? (Math.random() - 0.5) * s.shake : 0;
       const sy = s.shake ? (Math.random() - 0.5) * s.shake : 0;
-      const cx = s.camX + (0.5 - 0.30) * vw, cy = s.camY;
+      const cx = s.camX + (0.5 - 0.26) * vw, cy = s.camY;
 
       /* backdrop drifts horizontally only. giving it vertical parallax made
          the whole world bob on every swing, which reads as jitter */
