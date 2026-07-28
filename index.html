@@ -30,7 +30,7 @@
 <script>
 (function () {
 "use strict";
-var ST = null;
+var S = { current: null };
 
 /* ------------------------------------------------------------------
    THREAD
@@ -47,32 +47,33 @@ var ST = null;
    every landing is catchable, by construction.
 ------------------------------------------------------------------ */
 
-const G = 533;          // scaled for pace: G/k^2 and speed/k with k=1.3
-const ROPE = 290;          // fixed. every arc is the same shape
-const CATCH_SPEED = 477;   // speed at the bottom of the swing, always
-const KICK = 1.28;         // release boost — tuned so altitude breaks even
-const CATCH_R = 430;       // covers 99.6% of releases that clear the gap
-const REEL = 246;          // px/s the vine shortens to its true length
-const HANG = 270;
-const WALL_W = 26;
-const PR = 8;              // player radius
-const DEATH_Y = 1250;
-const WORLD_TOP = -900;    // scenery is drawn in world space, not camera space
-const WORLD_BOT = 1750;
-const LEAF_STEP = 46;
+const G = 606;             // pace: another 15% faster
+const ROPE = 209;
+const CATCH_SPEED = 412;   // nominal speed at the bottom of the swing
+const KICK = 1.28;
+const ENTRY = 50 * Math.PI / 180;     // how far behind the branch you catch it
+const AHEAD = ROPE * Math.sin(ENTRY);
+const HANG  = ROPE * Math.cos(ENTRY);
+const CATCH_R = 262;
+const REEL = 259;
+const WALL_W = 22;
+const PR = 7;              // player radius
+const DEATH_Y = 900;
+const WORLD_TOP = -700;    // scenery is drawn in world space, not camera space
+const WORLD_BOT = 1300;
+const LEAF_STEP = 40;
 
-/* the ramp. wide open at the start, tight and doubled up by gap 45.
-   measured release window: 383ms at the start, 190ms at full difficulty */
-const RAMP = 45;
+/* measured: gap 300px -> 872ms release window, 220 -> 796, 150 -> 662,
+   120 -> 488, 85 -> 289. the ramp walks down that curve over 100 gaps */
+const RAMP = 38;
 const lerp = (a, b, t) => a + (b - a) * t;
 const cfgFor = (passed) => {
   const d = Math.min(1, passed / RAMP);
   return {
     d,
-    gap: lerp(250, 80, d),
-    nextdx: lerp(480, 400, d),
-    dbl: d < 0.18 ? 0 : Math.min(0.72, (d - 0.18) * 1.25),
-    snap: lerp(4.16, 2.6, d),
+    gap: lerp(238, 58, d),
+    dbl: d < 0.30 ? 0 : Math.min(0.55, (d - 0.30) * 1.1),
+    snap: lerp(3.48, 2.23, d),
   };
 };
 
@@ -116,7 +117,7 @@ const hash = (n) => {
 
     let AC = null;
     const blip = (f, dur, type, gain, to) => {
-      if (!AC || ST.muted) return;
+      if (!AC || S.current.muted) return;
       try {
         const o = AC.createOscillator(), g = AC.createGain();
         o.type = type || "sine";
@@ -168,39 +169,81 @@ const hash = (n) => {
 
     const genFrom = (bx, by, passed) => {
       const c = cfgFor(passed);
-      const nd = c.nextdx, w1 = nd * 0.55;
-      for (let tries = 0; tries < 50; tries++) {
-        const phi = 0.10 + rnd() * 0.72;
-        const pts = flightPath(by, phi, nd + 40);
+      const spread = c.d;
+      /* aim for a height rather than taking whatever comes out first.
+         without this every branch lands at roughly the same level and the
+         whole run sits in one horizontal band */
+      const target = 170 + rnd() * lerp(150, 400, spread);
+      let bestCand = null, bestErr = 1e9;
+
+      for (let tries = 0; tries < 70; tries++) {
+        const phi = lerp(0.49, 0.40, spread) +
+                    rnd() * lerp(0.59, 0.80, spread);
+        const pts = flightPath(by, phi, 1600);
         if (!pts) continue;
 
+        // how far behind the branch you will catch it — 50 deg, widening
+        const entry = ENTRY + (rnd() - 0.5) * lerp(0.10, 0.58, spread);
+        const ahead = ROPE * Math.sin(entry);
+        const hang = ROPE * Math.cos(entry);
+
+        /* where along the descent the branch sits. moving this changes the
+           distance between branches, which is most of the visible variety */
+        const vyPick = 50 + (rnd() - 0.5) * lerp(24, 150, spread);
+        let ci = -1;
+        for (let i = 0; i < pts.length; i++) {
+          if (pts[i].vy > vyPick && pts[i].x > ROPE * 0.6) { ci = i; break; }
+        }
+        if (ci < 0) continue;
+        const Xc = pts[ci].x, Yc = pts[ci].y;
+        const relNext = Xc + ahead;
+        if (relNext < 330 || relNext > 560) continue;   // keep it on screen
+        const nby = Yc - hang;
+        if (nby < 110 || nby > 620) continue;
+
+        const w1 = relNext * (0.52 + (rnd() - 0.5) * lerp(0.05, 0.20, spread));
         const g1 = yAt(pts, w1);
-        if (g1 === null || g1 < 300 || g1 > 920) continue;
+        if (g1 === null || g1 < 210 || g1 > 820) continue;
+
+        // confirm this very flight actually comes within reach of it
+        let caught = false;
+        for (const p of pts) {
+          if (p.vy > -60 &&
+              Math.hypot(relNext - p.x, nby - p.y) <= CATCH_R) {
+            caught = true; break;
+          }
+        }
+        if (!caught) continue;
+
+        const err = Math.abs(nby - target);
+        if (err < bestErr) {
+          bestErr = err;
+          bestCand = { relNext, nby, w1, g1, pts };
+          if (err < 30) break;
+        }
+      }
+
+      if (bestCand) {
+        const { relNext, nby, w1, g1, pts } = bestCand;
         const walls = [{ x: bx + w1, gapY: g1, gap: c.gap, passed: false }];
 
-        // sometimes a second wall, placed on the same flight, so one
-        // release still threads both — that is what makes it hard
+        // sometimes a second wall on the same flight, so one release
+        // still threads both — that is what makes it hard
         if (rnd() < c.dbl) {
-          const w2 = w1 + lerp(200, 150, c.d);
-          if (w2 < nd - 90) {
+          const w2 = w1 + lerp(140, 105, c.d);
+          if (w2 < relNext - 70) {
             const g2 = yAt(pts, w2);
-            if (g2 !== null && g2 >= 300 && g2 <= 980) {
+            if (g2 !== null && g2 >= 210 && g2 <= 860) {
               walls.push({ x: bx + w2, gapY: g2, gap: c.gap, passed: false });
             }
           }
         }
 
-        const yend = yAt(pts, nd);
-        if (yend === null) continue;
-        const nby = yend - HANG;
-        if (nby < 150 || nby > 610) continue;
-
-        // sometimes split the opening with a middle blocker, giving an
-        // upper and a lower lane. the ideal flight is centred in one of
-        // them, so the segment stays guaranteed-passable either way
-        if (walls.length === 1 && c.d > 0.25 && rnd() < 0.34) {
-          const laneH = Math.min(150, Math.max(84, c.gap * 0.66));
-          const blkH = 62;
+        // sometimes split the opening into an upper and a lower lane. the
+        // ideal flight sits centred in one of them, so it stays passable
+        if (walls.length === 1 && c.d > 0.32 && rnd() < 0.32) {
+          const laneH = Math.min(120, Math.max(62, c.gap * 0.66));
+          const blkH = 46;
           const idealUpper = rnd() < 0.5;
           let upperC, blkC, lowerC;
           if (idealUpper) {
@@ -213,7 +256,7 @@ const hash = (n) => {
             upperC = blkC - blkH / 2 - laneH / 2;
           }
           const top = upperC - laneH / 2, bot = lowerC + laneH / 2;
-          if (top > 240 && bot < 1050) {
+          if (top > 170 && bot < 880) {
             walls[0].gapY = (top + bot) / 2;
             walls[0].gap = bot - top;
             walls[0].blk = blkC;
@@ -221,43 +264,36 @@ const hash = (n) => {
           }
         }
 
-        let caught = false;
-        for (const p of pts) {
-          if (p.vy > -90 && Math.hypot(nd - p.x, nby - p.y) <= CATCH_R) {
-            caught = true; break;
-          }
-        }
-        if (!caught) continue;
-
-        return { walls, nbx: bx + nd, nby };
+        return { walls, nbx: bx + relNext, nby };
       }
+
       return {
-        walls: [{ x: bx + 380, gapY: by + 300, gap: c.gap, passed: false }],
-        nbx: bx + 700,
-        nby: Math.max(200, Math.min(520, by)),
+        walls: [{ x: bx + 250, gapY: by + 210, gap: c.gap, passed: false }],
+        nbx: bx + 474,
+        nby: Math.max(180, Math.min(520, by)),
       };
     };
 
     const makeState = () => ({
       px: 0, py: 0, vx: 0, vy: 0,
-      branch: null, holdT: 0, ropeLen: ROPE,
+      branch: null, holdT: 0, ropeLen: ROPE, swingV: CATCH_SPEED,
       branches: [], walls: [],
       trail: [], particles: [], popups: [],
       dead: false, deadT: 0, deadWhy: "",
       score: 0, passed: 0,
       camX: 0, camY: 0, shake: 0, flash: 0, timeScale: 1,
-      zoom: 0.78, ui: 1,
+      zoom: 0.8, ui: 1, safeTop: 0,
       releases: 0, t: 0,
       blink: 0, nextBlink: 2 + Math.random() * 3,
       spin: 0, tailPhase: 0, drawAng: 0, armT: 1,
     });
 
-    ST = Object.assign(makeState(), {
+    S.current = Object.assign(makeState(), {
       best: 0, muted: false, W: 0, H: 0, dpr: 1, raf: 0, last: 0,
     });
 
     const extend = () => {
-      const s = ST;
+      const s = S.current;
       while (s.branches.length < 2 ||
              s.branches[s.branches.length - 1].x < s.px + 1800) {
         const last = s.branches[s.branches.length - 1];
@@ -272,35 +308,45 @@ const hash = (n) => {
        quarter second — so nothing teleports, but a loose release still
        gets caught */
     const attach = (b) => {
-      const s = ST;
+      const s = S.current;
       s.branch = b;
       const dx = s.px - b.x, dy = s.py - b.y;
       const d = Math.hypot(dx, dy) || 1;
       const nx = dx / d, ny = dy / d;
       s.ropeLen = Math.max(ROPE, Math.min(CATCH_R, d));
-      // clamp for the energy sum, so a long catch does not hand out speed
-      const py = Math.min(dy, ROPE);
-      const v2 = Math.max(4e4, CATCH_SPEED * CATCH_SPEED - 2 * G * (ROPE - py));
-      const v = Math.sqrt(v2);
-      // always swing forward
+
+      // the vine going taut throws away the radial part of your velocity.
+      // whatever is left is what you swing with
+      const radial = s.vx * nx + s.vy * ny;
+      let vx = s.vx, vy = s.vy;
+      if (radial > 0) { vx -= nx * radial; vy -= ny * radial; }
+      const vt = Math.hypot(vx, vy);
+
+      // convert that into an equivalent bottom-of-swing speed, and keep it
+      // in a band so a bad entry cannot make the next gap unreachable
+      const h = s.ropeLen - dy;
+      let vb = Math.sqrt(Math.max(1e4, vt * vt + 2 * G * h));
+      vb = Math.max(CATCH_SPEED * 0.88, Math.min(CATCH_SPEED * 1.14, vb));
+      s.swingV = vb;
+
+      const v = Math.sqrt(Math.max(2500, vb * vb - 2 * G * h));
       let tx = -ny, ty = nx;
-      if (tx < 0) { tx = -tx; ty = -ty; }
+      if (tx < 0) { tx = -tx; ty = -ty; }   // always swing forward
       s.vx = tx * v; s.vy = ty * v;
       s.holdT = 0;
-      // same sound every catch — a climbing scale just runs out of room
       blip(392, 0.16, "sine", 0.07);
       blip(156, 0.09, "triangle", 0.05);
     };
 
     const reset = () => {
-      const { best, muted, W, H, dpr, raf } = ST;
-      ST = Object.assign(makeState(), {
+      const { best, muted, W, H, dpr, raf } = S.current;
+      S.current = Object.assign(makeState(), {
         best, muted, W, H, dpr, raf, last: performance.now(),
       });
-      const s = ST;
+      const s = S.current;
       s.branches.push({ x: 0, y: 330, gone: false });
       // start at the back of the swing so the first thing you do is swing
-      const phi = -0.55;
+      const phi = -ENTRY;   // start at the back of the arc
       s.px = Math.sin(phi) * ROPE;
       s.py = 330 + Math.cos(phi) * ROPE;
       attach(s.branches[0]);
@@ -309,7 +355,7 @@ const hash = (n) => {
     };
 
     const resize = () => {
-      const s = ST;
+      const s = S.current;
       // measure the canvas, not the wrapper. if those two ever disagree the
       // backing store and the painted box drift and the whole scene scales
       const rect = canvas.getBoundingClientRect();
@@ -328,12 +374,12 @@ const hash = (n) => {
       s.safeTop = probe ? probe.offsetHeight : 0;
       // fit the world to the space: about 900 units tall, and never less
       // than 700 wide, so the next trunk is on screen before you commit
-      s.zoom = Math.max(0.4, Math.min(1.0, Math.min(h / 900, w / 700)));
+      s.zoom = Math.max(0.45, Math.min(1.15, Math.min(h / 1040, w / 620)));
       s.ui = Math.max(0.68, Math.min(1.25, h / 760));
     };
 
     const burst = (x, y, n, color) => {
-      const s = ST;
+      const s = S.current;
       for (let i = 0; i < n; i++) {
         const a = rnd() * Math.PI * 2, sp = 70 + rnd() * 250;
         s.particles.push({
@@ -343,7 +389,7 @@ const hash = (n) => {
     };
 
     const die = (why) => {
-      const s = ST;
+      const s = S.current;
       if (s.dead) return;
       s.dead = true; s.deadT = 0; s.deadWhy = why;
       s.best = Math.max(s.best, s.score);
@@ -353,7 +399,7 @@ const hash = (n) => {
     };
 
     const release = () => {
-      const s = ST;
+      const s = S.current;
       if (!s.branch) return;
       s.vx *= KICK; s.vy *= KICK;
       s.branch.gone = true;
@@ -364,7 +410,7 @@ const hash = (n) => {
     };
 
     const tap = () => {
-      const s = ST;
+      const s = S.current;
       initAudio();
       if (s.dead) { if (s.deadT > 0.3) reset(); return; }
       release();
@@ -376,14 +422,14 @@ const hash = (n) => {
         e.preventDefault();
         if (!e.repeat) tap();
       }
-      if (e.key === "m" || e.key === "M") ST.muted = !ST.muted;
+      if (e.key === "m" || e.key === "M") S.current.muted = !S.current.muted;
       if (e.key === "r" || e.key === "R") reset();
     };
     window.addEventListener("keydown", onKey);
 
     /* ---------- step ---------- */
     const step = (dt) => {
-      const s = ST;
+      const s = S.current;
       s.t += dt;
       if (s.dead) {
         s.deadT += dt;
@@ -413,6 +459,17 @@ const hash = (n) => {
           const radial = s.vx * nx + s.vy * ny;
           if (radial > 0) { s.vx -= nx * radial; s.vy -= ny * radial; }
         }
+
+        /* hold the swing to the energy it arrived with. conserving it means
+           the vine can never pump you, but carrying it means a fast entry
+           gives a fast wide swing and a slow one gives a lazy swing —
+           that variation is the difference between physics and a loop */
+        const h = s.ropeLen - (s.py - b.y);
+        const want = Math.sqrt(Math.max(
+          2500, s.swingV * s.swingV - 2 * G * h));
+        const sp = Math.hypot(s.vx, s.vy) || 1;
+        const f = want / sp;
+        s.vx *= f; s.vy *= f;
         s.holdT += dt;
         if (s.holdT > cfgFor(s.passed).snap) {
           burst(b.x, b.y, 14, "#6E5A44");
@@ -508,7 +565,7 @@ const hash = (n) => {
     };
 
     const stepParticles = (dt) => {
-      const s = ST;
+      const s = S.current;
       for (let i = s.particles.length - 1; i >= 0; i--) {
         const p = s.particles[i];
         p.vy += G * 0.3 * dt;
@@ -606,7 +663,7 @@ const hash = (n) => {
 
     /* ---------- draw ---------- */
     const draw = () => {
-      const s = ST;
+      const s = S.current;
       const W = s.W, H = s.H;
       const Z = s.zoom;
       const vw = W / Z, vh = H / Z;
@@ -708,9 +765,12 @@ const hash = (n) => {
       ctx.translate(-cx, -cy);
       const L = cx - vw / 2, R = cx + vw / 2, T = cy - vh / 2, B = cy + vh / 2;
 
-      // canopy tint and undergrowth
-      ctx.fillStyle = "rgba(76,109,115,0.20)";
-      ctx.fillRect(L - 50, WORLD_TOP, vw + 100, 300 - WORLD_TOP);
+      // canopy shade, faded out so it has no visible edge
+      const cz = ctx.createLinearGradient(0, WORLD_TOP, 0, 320);
+      cz.addColorStop(0, "rgba(76,109,115,0.22)");
+      cz.addColorStop(1, "rgba(76,109,115,0)");
+      ctx.fillStyle = cz;
+      ctx.fillRect(L - 50, WORLD_TOP, vw + 100, 320 - WORLD_TOP);
       const hz = ctx.createLinearGradient(0, DEATH_Y - 220, 0, DEATH_Y + 40);
       hz.addColorStop(0, "rgba(76,109,115,0)");
       hz.addColorStop(1, "rgba(76,109,115,0.92)");
@@ -736,7 +796,7 @@ const hash = (n) => {
           const side = (k % 2) ? 1 : -1;
           const lx = x + side * (WALL_W / 2 + 13);
           ctx.beginPath();
-          ctx.ellipse(lx, y, 26, 15, side * 0.32, 0, 6.3);
+          ctx.ellipse(lx, y, 21, 12, side * 0.32, 0, 6.3);
           ctx.fillStyle = side > 0 ? COL.leaf : COL.leafHi;
           ctx.fill();
           ctx.strokeStyle = COL.leafLine;
@@ -744,7 +804,7 @@ const hash = (n) => {
           ctx.stroke();
           if (hash(k * 2.7 + x * 0.013) > 0.72) {
             ctx.beginPath();
-            ctx.arc(lx + side * 9, y + 5, 4.5, 0, 6.3);
+            ctx.arc(lx + side * 8, y + 4, 3.8, 0, 6.3);
             ctx.fillStyle = COL.fruit;
             ctx.fill();
           }
@@ -760,9 +820,9 @@ const hash = (n) => {
         ctx.lineWidth = 2.5;
         ctx.strokeStyle = COL.leafLine;
         ctx.fillStyle = COL.leafHi;
-        ctx.beginPath(); ctx.ellipse(w.x, top, 32, 18, 0, 0, 6.3);
+        ctx.beginPath(); ctx.ellipse(w.x, top, 26, 15, 0, 0, 6.3);
         ctx.fill(); ctx.stroke();
-        ctx.beginPath(); ctx.ellipse(w.x, bot, 32, 18, 0, 0, 6.3);
+        ctx.beginPath(); ctx.ellipse(w.x, bot, 26, 15, 0, 0, 6.3);
         ctx.fill(); ctx.stroke();
         if (w.blk !== undefined) {
           ctx.fillStyle = COL.trunk;
@@ -772,10 +832,10 @@ const hash = (n) => {
           ctx.strokeStyle = COL.leafLine;
           ctx.fillStyle = COL.leafHi;
           ctx.beginPath();
-          ctx.ellipse(w.x, w.blk - w.blkH / 2, 27, 15, 0, 0, 6.3);
+          ctx.ellipse(w.x, w.blk - w.blkH / 2, 22, 12, 0, 0, 6.3);
           ctx.fill(); ctx.stroke();
           ctx.beginPath();
-          ctx.ellipse(w.x, w.blk + w.blkH / 2, 27, 15, 0, 0, 6.3);
+          ctx.ellipse(w.x, w.blk + w.blkH / 2, 22, 12, 0, 0, 6.3);
           ctx.fill(); ctx.stroke();
         }
       }
@@ -785,15 +845,15 @@ const hash = (n) => {
         if (b.x < L - 100 || b.x > R + 100) continue;
         if (b.gone && b !== s.branch) continue;
         ctx.strokeStyle = COL.bark;
-        ctx.lineWidth = 9;
+        ctx.lineWidth = 8;
         ctx.lineCap = "round";
         ctx.beginPath();
-        ctx.moveTo(b.x - 36, b.y - 4);
-        ctx.quadraticCurveTo(b.x, b.y - 12, b.x + 36, b.y - 2);
+        ctx.moveTo(b.x - 29, b.y - 3);
+        ctx.quadraticCurveTo(b.x, b.y - 10, b.x + 29, b.y - 2);
         ctx.stroke();
-        for (const lx of [-26, 2, 28]) {
+        for (const lx of [-21, 2, 23]) {
           ctx.beginPath();
-          ctx.ellipse(b.x + lx, b.y - 18, 17, 9,
+          ctx.ellipse(b.x + lx, b.y - 15, 14, 8,
                       lx * 0.014 - 0.3, 0, 6.3);
           ctx.fillStyle = lx > 0 ? COL.leaf : COL.leafHi;
           ctx.fill();
@@ -969,10 +1029,10 @@ const hash = (n) => {
 
     resize();
     reset();
-    ST.last = performance.now();
+    S.current.last = performance.now();
 
     const loop = (now) => {
-      const s = ST;
+      const s = S.current;
       s.raf = requestAnimationFrame(loop);
       resize();
       let dt = (now - s.last) / 1000;
@@ -983,7 +1043,7 @@ const hash = (n) => {
       for (let i = 0; i < steps; i++) step(scaled / steps);
       draw();
     };
-    ST.raf = requestAnimationFrame(loop);
+    S.current.raf = requestAnimationFrame(loop);
 
 
 
