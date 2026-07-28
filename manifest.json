@@ -1,6 +1,6 @@
 {
-  "name": "Thread",
-  "short_name": "Thread",
+  "name": "Chimpy",
+  "short_name": "Chimpy",
   "description": "Swing, let go at the right moment, fly through the gap.",
   "start_url": "./index.html",
   "scope": "./",

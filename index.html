@@ -6,11 +6,11 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="apple-mobile-web-app-title" content="Thread">
+<meta name="apple-mobile-web-app-title" content="Chimpy">
 <meta name="theme-color" content="#7FBEEB">
 <link rel="manifest" href="manifest.json">
 <link rel="apple-touch-icon" href="icons/icon-180.png">
-<title>Thread</title>
+<title>Chimpy</title>
 <style>
   * { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
   html, body {
@@ -94,10 +94,10 @@ const COL = {
   fruit: "#E0685C",
   bark: "#C09468",
 
-  fur: "#F2A257",    // the monkey pops against all of it
-  furDark: "#D07F42",
-  belly: "#FBEBD2",
-  ink: "#3F3A46",
+  fur: "#F0902F",    // the monkey pops against all of it
+  furDark: "#E07A2E",
+  belly: "#FFE3B8",
+  ink: "#2A2028",
   accent: "#F0B455",
   bad: "#E0685C",
   rope: "#7FA86B",
@@ -368,6 +368,8 @@ const hash = (n) => {
       canvas.style.height = h + "px";
       canvas.style.width = w + "px";
       canvas.style.height = h + "px";
+      canvas.style.width = w + "px";
+      canvas.style.height = h + "px";
       canvas.width = Math.round(w * dpr);
       canvas.height = Math.round(h * dpr);
       const probe = document.getElementById("safe");
@@ -578,84 +580,76 @@ const hash = (n) => {
     };
 
     /* ---------- character ----------
-       flat shapes only. no outlines, no gradients — forms read by colour
-       separation, with one darker tone for anything underneath */
+       drawn in the same units as the SVG mark (head radius 42) and scaled
+       down, so the game character and the site character are the same
+       drawing. flat fills, one dark outline, gentle frown. */
     const drawMonkey = (s, ang) => {
-      const r = PR * 1.9;
-      const t = s.armT;
-      const mixp = (a, b) => a + (b - a) * t;
+      const SC = PR / 24;
+      const t = s.armT;                       // 1 holding the vine, 0 flying
+      const mix = (a, b) => a + (b - a) * t;
 
       ctx.save();
       ctx.translate(s.px, s.py);
-      ctx.rotate(ang);
-
-      // tail — one clean curve, rounded cap
-      const tw = Math.sin(s.tailPhase) * 0.45;
-      ctx.beginPath();
-      ctx.moveTo(-r * 0.5, r * 0.35);
-      ctx.quadraticCurveTo(-r * 2.1, r * 0.55 + tw * r,
-                           -r * 2.0, -r * 0.45 + tw * r * 1.4);
-      ctx.strokeStyle = COL.furDark;
-      ctx.lineWidth = 5;
+      ctx.rotate(ang + (12 * Math.PI / 180) * t);   // leans while swinging
+      ctx.scale(SC, SC);
+      ctx.lineJoin = "round";
       ctx.lineCap = "round";
-      ctx.stroke();
+      ctx.strokeStyle = COL.ink;
 
-      // arms behind the body
-      ctx.strokeStyle = COL.furDark;
-      ctx.lineWidth = 6.5;
-      ctx.beginPath();
-      ctx.moveTo(mixp(-r * 0.5, -r * 0.4), mixp(r * 0.05, -r * 0.1));
-      ctx.lineTo(mixp(-r * 1.7, -r * 0.45), mixp(-r * 0.55, -r * 1.6));
-      ctx.moveTo(mixp(r * 0.5, r * 0.4), mixp(r * 0.05, -r * 0.1));
-      ctx.lineTo(mixp(r * 1.6, r * 0.45), mixp(-r * 0.25, -r * 1.6));
-      ctx.stroke();
-
-      // body — a soft rounded blob
-      ctx.beginPath();
-      ctx.ellipse(0, r * 0.5, r * 0.72, r * 0.66, 0, 0, 6.3);
-      ctx.fillStyle = COL.furDark;
-      ctx.fill();
-
-      // ears
-      ctx.fillStyle = COL.fur;
-      ctx.beginPath(); ctx.arc(-r * 0.88, -r * 0.42, r * 0.36, 0, 6.3); ctx.fill();
-      ctx.beginPath(); ctx.arc(r * 0.88, -r * 0.42, r * 0.36, 0, 6.3); ctx.fill();
-      ctx.fillStyle = COL.belly;
-      ctx.beginPath(); ctx.arc(-r * 0.88, -r * 0.42, r * 0.18, 0, 6.3); ctx.fill();
-      ctx.beginPath(); ctx.arc(r * 0.88, -r * 0.42, r * 0.18, 0, 6.3); ctx.fill();
-
-      // head — big, the way a kids' character reads
-      ctx.beginPath();
-      ctx.arc(0, -r * 0.12, r * 0.92, 0, 6.3);
-      ctx.fillStyle = COL.fur;
-      ctx.fill();
-
-      // face patch
-      ctx.beginPath();
-      ctx.ellipse(0, r * 0.12, r * 0.6, r * 0.5, 0, 0, 6.3);
-      ctx.fillStyle = COL.belly;
-      ctx.fill();
-
-      // eyes: dot plus highlight
-      const open = s.blink > 0 ? 0.12 : 1;
-      for (const ex of [-r * 0.34, r * 0.34]) {
+      const stroked = (fill, w, path) => {
         ctx.beginPath();
-        ctx.ellipse(ex, -r * 0.3, r * 0.15, r * 0.18 * open, 0, 0, 6.3);
+        path();
+        ctx.lineWidth = w;
+        ctx.stroke();
+        if (fill) { ctx.fillStyle = fill; ctx.fill(); }
+      };
+
+      // tail
+      ctx.lineWidth = 11;
+      ctx.beginPath();
+      ctx.moveTo(-26, 40);
+      ctx.bezierCurveTo(-96, 40, -110, -6, -78, -30);
+      ctx.stroke();
+
+      // arms: gripping up when held, swept out when free
+      ctx.lineWidth = 13;
+      ctx.beginPath();
+      ctx.moveTo(-22, 4);
+      ctx.lineTo(mix(-52, -40), mix(-20, -34));
+      ctx.lineTo(mix(-84, -30), mix(-2, -78));
+      ctx.moveTo(22, 6);
+      ctx.lineTo(mix(56, 52), mix(-8, -28));
+      ctx.lineTo(mix(86, 74), mix(-18, -66));
+      ctx.stroke();
+
+      ctx.lineWidth = 7;
+      // body
+      stroked(COL.furDark, 7, () => ctx.ellipse(0, 26, 34, 44, 0, 0, 6.3));
+      // ears
+      stroked(COL.fur, 7, () => ctx.arc(-40, -38, 18, 0, 6.3));
+      stroked(COL.fur, 7, () => ctx.arc(40, -38, 18, 0, 6.3));
+      // head
+      stroked(COL.fur, 7, () => ctx.arc(0, -30, 42, 0, 6.3));
+      // face patch
+      stroked(COL.belly, 7, () => ctx.ellipse(2, -18, 26, 21, 0, 0, 6.3));
+
+      // eyes, looking where he is going
+      const open = s.blink > 0 ? 0.14 : 1;
+      stroked("#FFFFFF", 7,
+        () => ctx.ellipse(-13, -40, 15, 17 * open, 0, 0, 6.3));
+      stroked("#FFFFFF", 7,
+        () => ctx.ellipse(17, -40, 15, 17 * open, 0, 0, 6.3));
+      if (open > 0.5) {
         ctx.fillStyle = COL.ink;
-        ctx.fill();
-        if (open > 0.5) {
-          ctx.beginPath();
-          ctx.arc(ex + r * 0.06, -r * 0.36, r * 0.05, 0, 6.3);
-          ctx.fillStyle = "#FFFFFF";
-          ctx.fill();
-        }
+        ctx.beginPath(); ctx.arc(-6, -39, 6, 0, 6.3); ctx.fill();
+        ctx.beginPath(); ctx.arc(24, -39, 6, 0, 6.3); ctx.fill();
       }
 
-      // small smile
+      // gentle frown
+      ctx.lineWidth = 5;
       ctx.beginPath();
-      ctx.arc(0, r * 0.04, r * 0.2, 0.3, Math.PI - 0.3);
-      ctx.strokeStyle = COL.ink;
-      ctx.lineWidth = 2.2;
+      ctx.moveTo(-10, -8);
+      ctx.quadraticCurveTo(2, -16, 14, -8);
       ctx.stroke();
 
       ctx.restore();
@@ -741,8 +735,17 @@ const hash = (n) => {
       // ---- ground, two bands
       {
         const gy = H * 0.90;
+        // wavy top edge — a fillRect here leaves a hard line across the screen
         ctx.fillStyle = COL.ground2;
-        ctx.fillRect(-40, gy, W + 80, H - gy + 120);
+        ctx.beginPath();
+        ctx.moveTo(-40, gy);
+        for (let x = -40; x <= W + 40; x += 20) {
+          ctx.lineTo(x, gy + Math.sin((x + cx * 0.18) / 240 + 2.1) * 14);
+        }
+        ctx.lineTo(W + 40, H + 120);
+        ctx.lineTo(-40, H + 120);
+        ctx.closePath();
+        ctx.fill();
         ctx.fillStyle = COL.ground1;
         ctx.beginPath();
         ctx.moveTo(-40, gy + 40);
@@ -766,16 +769,22 @@ const hash = (n) => {
       const L = cx - vw / 2, R = cx + vw / 2, T = cy - vh / 2, B = cy + vh / 2;
 
       // canopy shade, faded out so it has no visible edge
-      const cz = ctx.createLinearGradient(0, WORLD_TOP, 0, 320);
+      const cz = ctx.createLinearGradient(0, WORLD_TOP + 220, 0, 320);
       cz.addColorStop(0, "rgba(76,109,115,0.22)");
       cz.addColorStop(1, "rgba(76,109,115,0)");
       ctx.fillStyle = cz;
-      ctx.fillRect(L - 50, WORLD_TOP, vw + 100, 320 - WORLD_TOP);
+      ctx.fillRect(L - 50, WORLD_TOP + 220, vw + 100, 320 - WORLD_TOP - 220);
+      ctx.fillStyle = "rgba(76,109,115,0.22)";
+      ctx.fillRect(L - 50, WORLD_TOP - 400, vw + 100, 620);
+      // undergrowth: fades in at the top and then runs all the way to the
+      // bottom of the world. stopping it short left a hard edge on screen
       const hz = ctx.createLinearGradient(0, DEATH_Y - 220, 0, DEATH_Y + 40);
       hz.addColorStop(0, "rgba(76,109,115,0)");
       hz.addColorStop(1, "rgba(76,109,115,0.92)");
       ctx.fillStyle = hz;
       ctx.fillRect(L - 50, DEATH_Y - 220, vw + 100, 260);
+      ctx.fillStyle = "rgba(76,109,115,0.92)";
+      ctx.fillRect(L - 50, DEATH_Y + 40, vw + 100, WORLD_BOT - DEATH_Y);
 
       // the trunks you actually play against
       const leafyColumn = (x, y0, y1) => {
@@ -935,10 +944,6 @@ const hash = (n) => {
       ctx.restore();
 
 
-      if (s.flash > 0) {
-        ctx.fillStyle = "rgba(255,246,214," + s.flash * 0.3 + ")";
-        ctx.fillRect(0, 0, W, H);
-      }
 
       /* ---------- hud ---------- */
       const u = s.ui;
