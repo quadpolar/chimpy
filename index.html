@@ -20,8 +20,9 @@
     font-family:-apple-system,'Helvetica Neue',Inter,system-ui,sans-serif;
   }
   #stage { position:absolute; inset:0; touch-action:none; }
-  #c { position:absolute; inset:0; display:block; width:100%; height:100%; }
-  #safe { position:absolute; top:0; left:0; width:0;
+  #c { position:absolute; inset:0; display:block; }
+  /* probe: its height is the notch inset, read from JS */
+  #safe { position:absolute; top:0; left:0; width:1px;
           height:env(safe-area-inset-top); pointer-events:none; }
 </style>
 </head>
@@ -115,26 +116,99 @@ const hash = (n) => {
     if (!canvas || !wrap) return;
     const ctx = canvas.getContext("2d");
 
-    let AC = null;
-    const blip = (f, dur, type, gain, to) => {
-      if (!AC || S.current.muted) return;
+    /* ---------- sound ----------
+       soft and round. sine only, gentle attacks so nothing clicks, heavy
+       lowpass so there is no glare, long tails, and everything sent through
+       a small reverb so the notes sit in a space instead of on top of you.
+       kept quiet on purpose — it should be pleasant at length, not punchy */
+    let AC = null, MASTER = null, WET = null;
+
+    const initAudio = () => {
+      if (AC) {
+        if (AC.state !== "running" && AC.resume) AC.resume();
+        return;
+      }
       try {
-        const o = AC.createOscillator(), g = AC.createGain();
-        o.type = type || "sine";
-        o.frequency.setValueAtTime(f, AC.currentTime);
-        if (to) o.frequency.exponentialRampToValueAtTime(to, AC.currentTime + dur);
-        g.gain.setValueAtTime(0.0001, AC.currentTime);
-        g.gain.exponentialRampToValueAtTime(gain || 0.1, AC.currentTime + 0.01);
-        g.gain.exponentialRampToValueAtTime(0.0001, AC.currentTime + dur);
-        o.connect(g).connect(AC.destination);
-        o.start(); o.stop(AC.currentTime + dur + 0.02);
+        AC = new (window.AudioContext || window.webkitAudioContext)();
+
+        MASTER = AC.createGain();
+        MASTER.gain.value = 0.55;
+        const glare = AC.createBiquadFilter();
+        glare.type = "lowpass";
+        glare.frequency.value = 5200;
+        MASTER.connect(glare).connect(AC.destination);
+
+        // a small room, made from decaying filtered noise
+        const rev = AC.createConvolver();
+        const len = Math.floor(AC.sampleRate * 1.6);
+        const imp = AC.createBuffer(2, len, AC.sampleRate);
+        for (let ch = 0; ch < 2; ch++) {
+          const d = imp.getChannelData(ch);
+          for (let i = 0; i < len; i++) {
+            d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 3.2);
+          }
+        }
+        rev.buffer = imp;
+        WET = AC.createGain();
+        WET.gain.value = 0.34;
+        const revCut = AC.createBiquadFilter();
+        revCut.type = "lowpass";
+        revCut.frequency.value = 2200;
+        WET.connect(revCut).connect(rev).connect(MASTER);
+
+        const b = AC.createBuffer(1, 1, 22050);
+        const src = AC.createBufferSource();
+        src.buffer = b;
+        src.connect(MASTER);
+        src.start(0);
+        if (AC.state !== "running" && AC.resume) AC.resume();
       } catch (e) {}
     };
-    const initAudio = () => {
-      if (AC) return;
-      try { AC = new (window.AudioContext || window.webkitAudioContext)(); }
-      catch (e) {}
+
+    /* one soft note. `drop` gives it a droplet-like fall at the very start,
+       which is most of what makes a tone feel like water rather than a beep */
+    const soft = (freq, opt) => {
+      if (!AC || S.current.muted) return;
+      const o = opt || {};
+      const t0 = AC.currentTime + (o.delay || 0);
+      const dur = o.dur || 0.7;
+      try {
+        const osc = AC.createOscillator();
+        osc.type = "sine";
+        // a few cents of wander so repeats never sound machine-stamped
+        const f = freq * (1 + (Math.random() - 0.5) * 0.012);
+        if (o.drop) {
+          osc.frequency.setValueAtTime(f * o.drop, t0);
+          osc.frequency.exponentialRampToValueAtTime(f, t0 + 0.07);
+        } else {
+          osc.frequency.setValueAtTime(f, t0);
+        }
+        if (o.to) osc.frequency.exponentialRampToValueAtTime(o.to, t0 + dur);
+
+        const lp = AC.createBiquadFilter();
+        lp.type = "lowpass";
+        lp.frequency.setValueAtTime(o.cut || 1400, t0);
+        lp.frequency.exponentialRampToValueAtTime(
+          Math.max(220, (o.cut || 1400) * 0.45), t0 + dur);
+        lp.Q.value = 0.4;
+
+        const g = AC.createGain();
+        const peak = o.gain === undefined ? 0.09 : o.gain;
+        g.gain.setValueAtTime(0.0001, t0);
+        // slow enough that there is no click, fast enough to feel responsive
+        g.gain.exponentialRampToValueAtTime(peak, t0 + (o.attack || 0.018));
+        g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+
+        osc.connect(lp).connect(g);
+        g.connect(MASTER);
+        if (WET) g.connect(WET);
+        osc.start(t0);
+        osc.stop(t0 + dur + 0.05);
+      } catch (e) {}
     };
+
+    // kept so any older call sites still resolve
+    const blip = (f, dur, type, gain) => soft(f, { dur: dur, gain: gain });
 
     const rnd = () => Math.random();
 
@@ -334,8 +408,10 @@ const hash = (n) => {
       if (tx < 0) { tx = -tx; ty = -ty; }   // always swing forward
       s.vx = tx * v; s.vy = ty * v;
       s.holdT = 0;
-      blip(392, 0.16, "sine", 0.07);
-      blip(156, 0.09, "triangle", 0.05);
+      // catching a vine: warm marimba, with a low fifth for weight
+      // catching a vine: a low round droplet
+      soft(261.63, { dur: 0.55, gain: 0.075, cut: 1100, drop: 1.5 });
+      soft(130.81, { dur: 0.60, gain: 0.045, cut: 500 });
     };
 
     const reset = () => {
@@ -358,16 +434,15 @@ const hash = (n) => {
       const s = S.current;
       // measure the canvas, not the wrapper. if those two ever disagree the
       // backing store and the painted box drift and the whole scene scales
-      const rect = canvas.getBoundingClientRect();
+      /* measure the WRAPPER, never the canvas. pinning the canvas size and
+         then measuring the canvas means it can never grow again, which
+         leaves a strip of background showing when the viewport changes */
+      const rect = wrap.getBoundingClientRect();
       const w = Math.max(Math.round(rect.width) || window.innerWidth, 1);
       const h = Math.max(Math.round(rect.height) || window.innerHeight, 1);
       const dpr = Math.min(window.devicePixelRatio || 1, 2);
       if (w === s.W && h === s.H && dpr === s.dpr) return;
       s.W = w; s.H = h; s.dpr = dpr;
-      canvas.style.width = w + "px";
-      canvas.style.height = h + "px";
-      canvas.style.width = w + "px";
-      canvas.style.height = h + "px";
       canvas.style.width = w + "px";
       canvas.style.height = h + "px";
       canvas.width = Math.round(w * dpr);
@@ -397,7 +472,11 @@ const hash = (n) => {
       s.best = Math.max(s.best, s.score);
       s.shake = 5;
       burst(s.px, s.py, 30, COL.bad);
-      blip(240, 0.35, "sawtooth", 0.08, 55);
+      // dying: a gentle falling third
+      // dying: a slow soft descent, never a buzzer
+      soft(261.63, { dur: 0.75, gain: 0.070, cut: 900 });
+      soft(196.00, { dur: 1.00, gain: 0.060, cut: 750, delay: 0.16 });
+      soft(130.81, { dur: 1.40, gain: 0.050, cut: 480, delay: 0.34 });
     };
 
     const release = () => {
@@ -408,7 +487,9 @@ const hash = (n) => {
       s.branch = null;
       s.releases += 1;
       s.timeScale = 0.7;
-      blip(330, 0.09, "sine", 0.05, 470);
+      // letting go: a soft airy rise
+      // letting go: barely there, just enough to feel the input land
+      soft(196.00, { dur: 0.34, gain: 0.030, cut: 700 });
     };
 
     const tap = () => {
@@ -475,7 +556,8 @@ const hash = (n) => {
         s.holdT += dt;
         if (s.holdT > cfgFor(s.passed).snap) {
           burst(b.x, b.y, 14, "#6E5A44");
-          blip(150, 0.2, "sawtooth", 0.06, 44);
+          soft(98.00, { dur: 0.60, gain: 0.075, cut: 420, drop: 1.35 });
+          soft(146.83, { dur: 0.40, gain: 0.035, cut: 600, delay: 0.03 });
           b.gone = true;
           s.branch = null;
           s.shake = 5;
@@ -522,8 +604,10 @@ const hash = (n) => {
               });
             }
           }
-          blip(880, 0.13, "sine", 0.065);
-          blip(1320, 0.09, "sine", 0.03);
+          // clearing a gap: a small bell, a fifth and an octave above
+          // clearing a gap: a soft fifth, long tail, well down in level
+          soft(392.00, { dur: 1.05, gain: 0.085, cut: 1600, drop: 1.22 });
+          soft(587.33, { dur: 0.95, gain: 0.045, cut: 1900, delay: 0.07 });
         }
       }
 
@@ -951,7 +1035,8 @@ const hash = (n) => {
         "px 'Helvetica Neue', Inter, system-ui, sans-serif";
       const pop = 1 + Math.max(0, s.flash) * 0.7;
       ctx.save();
-      ctx.translate(26 * u, 30 * u + s.safeTop);
+      ctx.translate(26 * u, (30 + Math.max(0, 26 - s.safeTop)) * u
+                     + s.safeTop);
       ctx.scale(pop * u, pop * u);
       const txt = String(s.score);
       ctx.font = "800 40px 'Helvetica Neue', Inter, system-ui, sans-serif";
@@ -969,7 +1054,8 @@ const hash = (n) => {
       ctx.textAlign = "left";
       ctx.font = label;
       ctx.fillStyle = COL.dim;
-      ctx.fillText("BEST " + s.best, 28 * u, 100 * u + s.safeTop);
+      ctx.fillText("BEST " + s.best, 28 * u,
+                   (100 + Math.max(0, 26 - s.safeTop)) * u + s.safeTop);
 
       if (s.releases < 1 && !s.dead) {
         ctx.textAlign = "center";
