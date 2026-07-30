@@ -1,4 +1,4 @@
-var CACHE = "chimpy-v19";
+var CACHE = "chimpy-v20";
 var ASSETS = ["./", "./index.html", "./manifest.json",
   "./icons/icon-180.png", "./icons/icon-192.png", "./icons/icon-512.png"];
 self.addEventListener("install", function (e) {

@@ -47,7 +47,7 @@ var S = { current: null };
    every landing is catchable, by construction.
 ------------------------------------------------------------------ */
 
-const VERSION = "v19";
+const VERSION = "v20";
 
 const G = 606;             // pace: another 15% faster
 const ROPE = 209;
@@ -463,9 +463,15 @@ const hash = (n) => {
     };
 
     const reset = () => {
-      const { best, muted, W, H, dpr, raf } = S.current;
+      /* everything derived from the viewport has to survive a restart.
+         resize() early-returns when the dimensions have not changed, so
+         anything dropped here would stay at its default for the rest of
+         the session — including the zoom, which changes the framing. */
+      const { best, muted, W, H, dpr, raf,
+              safeTop, zoom, ui, land, PW, PH } = S.current;
       S.current = Object.assign(makeState(), {
         best, muted, W, H, dpr, raf, last: performance.now(),
+        safeTop, zoom, ui, land, PW, PH,
       });
       const s = S.current;
       s.branches.push({ x: 0, y: 330, gone: false });
@@ -486,8 +492,12 @@ const hash = (n) => {
          then measuring the canvas means it can never grow again, which
          leaves a strip of background showing when the viewport changes */
       const rect = wrap.getBoundingClientRect();
-      const w = Math.max(Math.round(rect.width) || window.innerWidth, 1);
-      const h = Math.max(Math.round(rect.height) || window.innerHeight, 1);
+      /* in standalone, height:100% can resolve shorter than the real screen
+         once the home indicator area is involved, which leaves a strip of
+         page background showing. window.innerHeight reports the true height
+         with viewport-fit=cover, so take whichever is larger. */
+      const w = Math.max(Math.round(rect.width), window.innerWidth || 0, 1);
+      const h = Math.max(Math.round(rect.height), window.innerHeight || 0, 1);
       const dpr = Math.min(window.devicePixelRatio || 1, 2);
       /* portrait only. iOS ignores the manifest orientation for home screen
          apps and has no orientation lock API, so instead the scene is drawn
@@ -936,6 +946,27 @@ const hash = (n) => {
         ctx.fillRect(x - WALL_W / 2, y0, WALL_W, y1 - y0);
         ctx.fillStyle = COL.trunkDark;
         ctx.fillRect(x + WALL_W / 2 - 8, y0, 8, y1 - y0);
+
+        /* grain: three lines, each wandering on its own phase so none are
+           straight or parallel. plotted against world y, so it cannot slide
+           along the trunk as the camera moves — the mistake the leaf clumps
+           made once already. only the visible span is drawn. */
+        const gTop = Math.max(y0, T - 60), gBot = Math.min(y1, B + 60);
+        if (gBot > gTop) {
+          ctx.strokeStyle = "rgba(142,115,80,0.35)";
+          ctx.lineWidth = 1.2;
+          for (let k = 0; k < 3; k++) {
+            const gx = x - 8 + k * 3.5, ph = k * 1.7;
+            ctx.beginPath();
+            for (let y = gTop; y <= gBot; y += 10) {
+              const px = gx + Math.sin(y * 0.03 + ph) * 1.4;
+              if (y === gTop) ctx.moveTo(px, y);
+              else ctx.lineTo(px, y);
+            }
+            ctx.stroke();
+          }
+        }
+
         ctx.strokeStyle = COL.trunkLine;
         ctx.lineWidth = 2.5;
         ctx.beginPath();

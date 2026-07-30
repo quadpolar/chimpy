@@ -12,6 +12,7 @@ shows its number in the game, faint, under BEST.
 | 17    | `chimpy-v4`   | Portrait only: the scene rotates when the phone does, since iOS has no orientation lock for web apps. **Runs capped around 31.** |
 | 18    | `chimpy-v18`  | Difficulty rework. Numbering switched to one continuous counter here. |
 | 19    | `chimpy-v19`  | Removed the aim dots in front of the monkey — a leftover from when the release point had to be judged rather than aimed at a visible gap. |
+| 20    | `chimpy-v20`  | Wood grain on the trunks. Fixed the blue bar at the bottom for real. Fixed layout state being wiped on every restart. |
 
 Builds 14–17 used a second counter that restarted at 1 after the rename,
 which made them impossible to place against build 13. That is why 18
@@ -39,3 +40,24 @@ ramp value. Still validated against a weak arrival, so always passable.
 **Openings aim high and low.** Candidate selection now scores on opening
 height as well as branch height. Spread went from a narrow mid band to
 288–607 with sd 62.
+
+
+## Build 20 in detail
+
+**Grain on the trunks.** Three faint lines per trunk, each wandering on its
+own sine phase so none are straight or parallel. Plotted against world y so
+it cannot slide along the trunk as the camera moves, and clipped to the
+visible span so off-screen trunks cost nothing.
+
+**The blue bar, properly.** The canvas was sized from the wrapper, whose
+`height:100%` can resolve shorter than the real screen in standalone once
+the home indicator area is involved. It now takes the larger of the wrapper
+rect and `window.innerHeight`, which reports the true height under
+`viewport-fit=cover`.
+
+**Layout state surviving a restart.** `reset()` preserved W, H and dpr but
+dropped safeTop, zoom, ui, land, PW and PH. Since `resize()` early-returns
+when the dimensions have not changed, those stayed at their defaults for the
+rest of the session — so after the first death the zoom silently reverted to
+0.8 and the score crept back under the clock. All viewport-derived state is
+now carried across.
