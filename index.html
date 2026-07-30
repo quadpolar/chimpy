@@ -15,12 +15,13 @@
   * { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
   html, body {
     position:fixed; inset:0; width:100%; height:100%; overflow:hidden;
-    background:#7FBEEB; overscroll-behavior:none;
+    background:#B9C9D6; overscroll-behavior:none;
     -webkit-user-select:none; user-select:none;
     font-family:-apple-system,'Helvetica Neue',Inter,system-ui,sans-serif;
   }
   #stage { position:absolute; inset:0; touch-action:none; }
-  #c { position:absolute; inset:0; display:block; }
+  #c { position:absolute; inset:0; display:block;
+       width:100%; height:100%; }
   #safe { position:absolute; top:0; left:0; width:1px;
           height:env(safe-area-inset-top); pointer-events:none; }
 </style>
@@ -47,7 +48,7 @@ var S = { current: null };
    every landing is catchable, by construction.
 ------------------------------------------------------------------ */
 
-const VERSION = "v20";
+const VERSION = "v22";
 
 const G = 606;             // pace: another 15% faster
 const ROPE = 209;
@@ -253,16 +254,26 @@ const hash = (n) => {
        generation used to validate only against the nominal speed, so a gap
        could be genuinely impossible for a weak arrival. this checks the
        worst case. */
-    const clearableWeak = (by, w1, g1, gap) => {
+    const weakClears = (by, walls) => {
+      let n = 0;
+      const far = walls[walls.length - 1].rx + 40;
       for (let k = 0; k < 22; k++) {
         const phi = -0.17 + k * 0.062;
-        const q = flightPath(by, phi, w1 + 40, CATCH_SPEED * 0.88);
+        const q = flightPath(by, phi, far, CATCH_SPEED * 0.88);
         if (!q) continue;
-        const yy = yAt(q, w1);
-        if (yy !== null && Math.abs(yy - g1) < gap / 2 - PR) return true;
+        let ok = true;
+        for (const w of walls) {
+          const yy = yAt(q, w.rx);
+          if (yy === null || Math.abs(yy - w.gy) >= w.gap / 2 - PR) {
+            ok = false; break;
+          }
+        }
+        if (ok) n++;
       }
-      return false;
+      return n;   // each step is roughly 30ms of release window
     };
+    const clearableWeak = (by, w1, g1, gap) =>
+      weakClears(by, [{ rx: w1, gy: g1, gap: gap }]) > 0;
 
     const genFrom = (bx, by, passed) => {
       const c = cfgFor(passed);
@@ -348,12 +359,31 @@ const hash = (n) => {
         const hardOK = calmNow && !spike;
         let wentHard = spike;
         if (hardOK && rnd() < c.dbl) {
-          const w2 = w1 + lerp(140, 105, c.d);
-          if (w2 < relNext - 70) {
+          /* closer together than they used to be. a double's window is the
+             INTERSECTION of two windows, and the trajectory drops between
+             the walls — the further apart, the less the two overlap. */
+          const w2 = w1 + lerp(95, 68, c.d);
+          if (w2 < relNext - 60) {
             const g2 = yAt(pts, w2);
             if (g2 !== null && g2 >= 210 && g2 <= 860) {
-              walls.push({ x: bx + w2, gapY: g2, gap: gapH, passed: false });
-              wentHard = true;
+              // one of the pair is more generous, so a double is two
+              // constraints but not two tight ones
+              const wide = 1.35;
+              const firstWide = rnd() < 0.5;
+              const h1 = firstWide ? gapH * wide : gapH;
+              const h2 = firstWide ? gapH : gapH * wide;
+              /* and the pair is validated together against a weak arrival.
+                 checking only the first wall is what made doubles the
+                 hardest thing in the game — up to 67% were unclearable. */
+              const n = weakClears(by, [
+                { rx: w1, gy: g1, gap: h1 },
+                { rx: w2, gy: g2, gap: h2 },
+              ]);
+              if (n >= 5) {          // roughly a 150ms window or better
+                walls[0].gap = h1;
+                walls.push({ x: bx + w2, gapY: g2, gap: h2, passed: false });
+                wentHard = true;
+              }
             }
           }
         }
@@ -508,8 +538,10 @@ const hash = (n) => {
       const LH = land ? w : h;
       if (LW === s.W && LH === s.H && dpr === s.dpr && land === s.land) return;
       s.W = LW; s.H = LH; s.dpr = dpr; s.land = land;
-      canvas.style.width = w + "px";
-      canvas.style.height = h + "px";
+      /* never set a pixel size on the canvas. an absolutely positioned
+         element with inset:0 AND an explicit height ignores `bottom`, so a
+         measurement even slightly short leaves a strip of page showing.
+         CSS does the covering; only the backing store is set here. */
       canvas.width = Math.round(w * dpr);
       canvas.height = Math.round(h * dpr);
       const probe = document.getElementById("safe");
