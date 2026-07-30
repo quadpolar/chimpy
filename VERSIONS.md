@@ -41,25 +41,21 @@ height as well as branch height. Spread went from a narrow mid band to
 288–607 with sd 62.
 
 
-## Build 23 — the bar at the bottom, measured
+## Build 24 — the scale regression
 
-Three previous attempts failed because each fixed a plausible cause rather
-than the actual one. Measuring the screenshot settled it: the bar was
-exactly 47 CSS points tall and its colour was (185, 204, 209), which is
-`#B9C9D6` — the page background colour. So the canvas really was 47pt short
-of the screen, and nothing about the drawing was involved.
+Build 23 removed `width:100%; height:100%` from the canvas, on the reasoning
+that `inset:0` would stretch it. That is true for ordinary elements and false
+for **replaced** elements, which `<canvas>` is. For an absolutely positioned
+replaced element, `width:auto` resolves to the intrinsic size — for a canvas
+that is the backing store, i.e. screen size times dpr — and the over-
+constrained inset is ignored. So the canvas laid out at 1284x2778 CSS px and
+the screen showed its top-left corner at 1:1, which looked like a 3x zoom.
 
-The cause was in the layout chain: `body` carried `position:fixed; inset:0`
-**and** `height:100%`. On a fixed element an explicit height overrides
-`bottom:0`, so when iOS reported a layout viewport shorter than the screen,
-`#stage` and the canvas inherited the shortfall.
+Percentage sizing restored. The distinction that matters:
 
-- `width`/`height:100%` removed from html, body and the canvas, so `inset:0`
-  governs and cannot come up short.
-- `min-height:100dvh` added, covering the case where the dynamic viewport is
-  taller than the layout viewport.
-- The backing store now takes the tallest of the wrapper rect,
-  `window.innerHeight` and `documentElement.clientHeight`. These can disagree
-  by tens of points in standalone and the smallest one was winning.
-- The page background was set to the game's own colour at the bottom of the
-  screen, so even a one-pixel seam during rotation is invisible.
+- percentage size on the canvas — correct, stretches to the parent
+- pixel size on the canvas set from JS — the cause of the bar in builds 20
+  and earlier, and must not come back
+
+Expected framing on a 428x926pt screen: zoom 0.69, about 1.4 branch spacings
+across the width, monkey head roughly 8.4pt.
