@@ -14,14 +14,19 @@
 <style>
   * { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
   html, body {
-    position:fixed; inset:0; width:100%; height:100%; overflow:hidden;
-    background:#B9C9D6; overscroll-behavior:none;
+    /* no width/height here. `height:100%` overrides `bottom:0` on a fixed
+       element, so if iOS reports a layout viewport shorter than the screen
+       the whole stack inherits the shortfall — that was the bar. inset:0
+       alone stretches to the containing block, and 100dvh covers the case
+       where the dynamic viewport is the taller of the two. */
+    position:fixed; inset:0; min-height:100dvh; overflow:hidden;
+    background:#5F7277; overscroll-behavior:none;
     -webkit-user-select:none; user-select:none;
     font-family:-apple-system,'Helvetica Neue',Inter,system-ui,sans-serif;
   }
-  #stage { position:absolute; inset:0; touch-action:none; }
-  #c { position:absolute; inset:0; display:block;
-       width:100%; height:100%; }
+  #stage { position:fixed; inset:0; min-height:100dvh;
+           touch-action:none; }
+  #c { position:absolute; inset:0; display:block; }
   #safe { position:absolute; top:0; left:0; width:1px;
           height:env(safe-area-inset-top); pointer-events:none; }
 </style>
@@ -48,7 +53,7 @@ var S = { current: null };
    every landing is catchable, by construction.
 ------------------------------------------------------------------ */
 
-const VERSION = "v22";
+const VERSION = "v23";
 
 const G = 606;             // pace: another 15% faster
 const ROPE = 209;
@@ -527,7 +532,12 @@ const hash = (n) => {
          page background showing. window.innerHeight reports the true height
          with viewport-fit=cover, so take whichever is larger. */
       const w = Math.max(Math.round(rect.width), window.innerWidth || 0, 1);
-      const h = Math.max(Math.round(rect.height), window.innerHeight || 0, 1);
+      /* take the tallest measurement available. in standalone these can
+         disagree by tens of points and the smallest one leaves a strip
+         of page showing at the bottom. */
+      const de = document.documentElement;
+      const h = Math.max(Math.round(rect.height), window.innerHeight || 0,
+                         de ? de.clientHeight : 0, 1);
       const dpr = Math.min(window.devicePixelRatio || 1, 2);
       /* portrait only. iOS ignores the manifest orientation for home screen
          apps and has no orientation lock API, so instead the scene is drawn

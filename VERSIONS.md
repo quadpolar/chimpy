@@ -41,45 +41,25 @@ height as well as branch height. Spread went from a narrow mid band to
 288–607 with sd 62.
 
 
-## Build 22 — double trees
+## Build 23 — the bar at the bottom, measured
 
-Measured before changing anything. The release window for a double is the
-INTERSECTION of two windows, and the trajectory drops between the two walls,
-so the further apart they are the less those windows overlap. Measured with
-the old settings:
+Three previous attempts failed because each fixed a plausible cause rather
+than the actual one. Measuring the screenshot settled it: the bar was
+exactly 47 CSS points tall and its colour was (185, 204, 209), which is
+`#B9C9D6` — the page background colour. So the canvas really was 47pt short
+of the screen, and nothing about the drawing was involved.
 
-  gap#   opening   single   double   double @0.88   impossible
-    55     158px    512ms    304ms         143ms          17%
-    65     144px    488ms    276ms         111ms          34%
-    75     119px    422ms    248ms         104ms          41%
-    85      91px    347ms    181ms          60ms          67%
+The cause was in the layout chain: `body` carried `position:fixed; inset:0`
+**and** `height:100%`. On a fixed element an explicit height overrides
+`bottom:0`, so when iOS reported a layout viewport shorter than the screen,
+`#stage` and the canvas inherited the shortfall.
 
-The cause was a bug. The weak-arrival validation added in build 18 only ever
-checked the FIRST wall — the second was appended afterwards with no check at
-all. So the "no impossible gaps" guarantee never applied to doubles.
-
-Three changes:
-
-**Closer together.** Separation 140→105 becomes 95→68, which widens the
-overlap between the two windows.
-
-**One of the pair is wider.** A random one of the two openings is 1.35x,
-so a double is two constraints but not two tight ones.
-
-**Validated as a pair.** The weak-arrival check now takes a list of walls and
-counts how many release angles clear them all. A double is only emitted if at
-least five do, which is roughly a 150ms window or better. Otherwise the
-segment stays a single.
-
-After:
-
-  gap#   opening   doubles emitted   double   double @0.88   impossible
-    45     162px              83%     448ms          336ms          0%
-    55     158px              75%     443ms          325ms          0%
-    65     144px              65%     428ms          328ms          0%
-    75     119px              52%     364ms          324ms          0%
-    85      91px              36%     217ms          306ms          0%
-
-Doubles get rarer as the openings narrow, because fewer of them pass the
-check. That is the intended behaviour: late game has fewer doubles rather
-than impossible ones.
+- `width`/`height:100%` removed from html, body and the canvas, so `inset:0`
+  governs and cannot come up short.
+- `min-height:100dvh` added, covering the case where the dynamic viewport is
+  taller than the layout viewport.
+- The backing store now takes the tallest of the wrapper rect,
+  `window.innerHeight` and `documentElement.clientHeight`. These can disagree
+  by tens of points in standalone and the smallest one was winning.
+- The page background was set to the game's own colour at the bottom of the
+  screen, so even a one-pixel seam during rotation is invisible.
